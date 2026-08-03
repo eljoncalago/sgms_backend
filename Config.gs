@@ -36,8 +36,14 @@ const CONFIG = {
     CALCULATION_MODE: 'STRICT', // STRICT or PROGRESS
     OVERALL_PASSING_PERCENT: 50,
     SYSTEM_VERSION: '1.0.0',
-    THEME: 'light',
-    // Stage passing scores
+    THEME: 'purple',
+    // Individual component passing scores (per spec requirement #1)
+    MIDTERM_COLLECTIVE_PASSING: 50,
+    FINAL_COLLECTIVE_INITIAL_PASSING: 50,
+    FINAL_COLLECTIVE_FINAL_PASSING: 50,
+    MIDTERM_EXAM_PASSING: 50,
+    FINAL_EXAM_PASSING: 50,
+    // Cumulative stage passing scores
     STAGE1_PASSING: 40, // Midterm Collective + Midterm Exam
     STAGE2_PASSING: 55, // + Final Collective Initial
     STAGE3_PASSING: 65, // + Final Collective Final
