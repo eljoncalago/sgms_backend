@@ -1,6 +1,10 @@
 /**
  * SGMS Activity Service
  * Handles grading activities and terms management
+ *
+ * FIX: handleCreateActivity and handleUpdateActivity now read and persist
+ *      the GRADE_LEVEL field so activities can be grade-level-specific.
+ *      '' (empty string) means the activity is shared across all grade levels.
  */
 
 /**
@@ -173,11 +177,16 @@ function handleGetActivity(payload) {
 
 /**
  * Handle create activity
+ *
+ * FIX: Now reads and saves the GRADE_LEVEL field from payload.
+ *      gradeLevel = '' means the activity applies to ALL grade levels.
+ *      gradeLevel = '3' means the activity only applies to Grade 3 students.
  */
 function handleCreateActivity(payload, token) {
   try {
     const adminId = getAdminIdFromToken(token);
-    const { termId, activityName, activityType, maxScore } = payload;
+    // FIX: destructure gradeLevel from payload
+    const { termId, activityName, activityType, maxScore, gradeLevel } = payload;
     
     if (!termId || !activityName || !maxScore) {
       return createResponse({
@@ -207,6 +216,8 @@ function handleCreateActivity(payload, token) {
       ACTIVITY_NAME: activityName,
       ACTIVITY_TYPE: activityType || 'General',
       MAX_SCORE: maxScore,
+      // FIX: persist grade level — '' means shared across all grades
+      GRADE_LEVEL: (gradeLevel !== undefined && gradeLevel !== null) ? String(gradeLevel).trim() : '',
       ACTIVITY_ORDER: maxOrder + 1,
       IS_ACTIVE: true,
       CREATED_AT: new Date().toISOString(),
@@ -242,11 +253,14 @@ function handleCreateActivity(payload, token) {
 
 /**
  * Handle update activity
+ *
+ * FIX: Now reads and saves the GRADE_LEVEL field from payload.
  */
 function handleUpdateActivity(payload, token) {
   try {
     const adminId = getAdminIdFromToken(token);
-    const { activityId, activityName, activityType, maxScore, isActive } = payload;
+    // FIX: destructure gradeLevel from payload
+    const { activityId, activityName, activityType, maxScore, isActive, gradeLevel } = payload;
     
     if (!activityId) {
       return createResponse({
@@ -264,6 +278,10 @@ function handleUpdateActivity(payload, token) {
     if (activityType) updates.ACTIVITY_TYPE = activityType;
     if (maxScore !== undefined) updates.MAX_SCORE = maxScore;
     if (isActive !== undefined) updates.IS_ACTIVE = isActive;
+    // FIX: persist grade level when provided (including empty string to clear it)
+    if (gradeLevel !== undefined && gradeLevel !== null) {
+      updates.GRADE_LEVEL = String(gradeLevel).trim();
+    }
     
     updateRecord(CONFIG.SHEETS.ACTIVITIES, 'ACTIVITY_ID', activityId, updates);
     

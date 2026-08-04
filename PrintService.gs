@@ -207,10 +207,18 @@ function insertQRCode(sheet, student, isLeft) {
  * For a given termId, collect activities (sorted by order) and student scores.
  * Returns { activities: [{name, type, maxScore, rawScore}], weight, passingPercent }
  */
-function buildTermData(termId, studentId) {
+function buildTermData(termId, studentId, studentGradeLevel) {
+  // FIX: filter by grade level — include activity if it has no GRADE_LEVEL (shared)
+  //      OR its GRADE_LEVEL matches the student's grade level.
+  var gradeToMatch = String(studentGradeLevel || '').trim();
   var allActivities = getAllRecords(CONFIG.SHEETS.ACTIVITIES);
   var termActivities = allActivities.filter(function(a) {
-    return a.TERM_ID === termId && (a.IS_ACTIVE === true || a.IS_ACTIVE === 'TRUE' || a.IS_ACTIVE === 'true');
+    if (a.TERM_ID !== termId) return false;
+    if (!(a.IS_ACTIVE === true || a.IS_ACTIVE === 'TRUE' || a.IS_ACTIVE === 'true')) return false;
+    var actGrade = String(a.GRADE_LEVEL || '').trim();
+    // Include if activity is shared (no grade) OR matches student's grade
+    if (actGrade !== '' && gradeToMatch !== '' && actGrade !== gradeToMatch) return false;
+    return true;
   });
   termActivities.sort(function(a, b) { return (a.ACTIVITY_ORDER || 0) - (b.ACTIVITY_ORDER || 0); });
 
@@ -547,12 +555,16 @@ function handleGeneratePrintReport(payload, token) {
         sheet = pageSheet;
       }
 
-      function buildAll(studentId) {
+      // FIX: buildAll now accepts the student object and passes the student's
+      //      GRADE_LEVEL to buildTermData so it filters activities correctly.
+      function buildAll(student) {
+        var studentId = student.STUDENT_ID;
+        var studentGradeLevel = student.GRADE_LEVEL || '';
         var result = {};
         Object.keys(termRoles).forEach(function(role) {
           var term = termRoles[role];
           result[role] = term.TERM_ID
-            ? buildTermData(term.TERM_ID, studentId)
+            ? buildTermData(term.TERM_ID, studentId, studentGradeLevel)
             : { activities: [], weight: 0, passingPercent: 50, termName: role };
         });
         return result;
@@ -560,7 +572,7 @@ function handleGeneratePrintReport(payload, token) {
 
       if (student1) {
         try {
-          fillStudentColumns(sheet, student1, buildAll(id1), true, settings, stageNum);
+          fillStudentColumns(sheet, student1, buildAll(student1), true, settings, stageNum);
           processed++;
         } catch (e) {
           errors.push('Student 1 (' + id1 + '): ' + e.toString());
@@ -569,7 +581,7 @@ function handleGeneratePrintReport(payload, token) {
 
       if (student2) {
         try {
-          fillStudentColumns(sheet, student2, buildAll(id2), false, settings, stageNum);
+          fillStudentColumns(sheet, student2, buildAll(student2), false, settings, stageNum);
           processed++;
         } catch (e) {
           errors.push('Student 2 (' + id2 + '): ' + e.toString());
