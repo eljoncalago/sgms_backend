@@ -39,7 +39,7 @@ function handleImportStudents(payload, token) {
           return;
         }
         
-        if (mode === 'UPDATE_EXISTING_AND_NEW' && studentId) {
+        if (studentId) {
           const existing = findRecordById(CONFIG.SHEETS.STUDENTS, 'STUDENT_ID', studentId);
           if (existing) {
             updateRecord(CONFIG.SHEETS.STUDENTS, 'STUDENT_ID', studentId, {
@@ -56,9 +56,10 @@ function handleImportStudents(payload, token) {
           }
         }
         
-        // Create new student
+        // Create new student — keep the STUDENT_ID from the Excel file when
+        // provided; only generate one when the row leaves it blank.
         const newStudent = {
-          STUDENT_ID: generateId(CONFIG.VALIDATION.STUDENT_ID_PREFIX),
+          STUDENT_ID: studentId || generateId(CONFIG.VALIDATION.STUDENT_ID_PREFIX),
           THAI_NAME: thaiName,
           ENGLISH_NAME: englishName,
           GRADE_LEVEL: gradeLevel,
