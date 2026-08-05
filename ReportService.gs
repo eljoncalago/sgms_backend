@@ -25,14 +25,25 @@ function handleGetStudentReport(payload) {
     var scores = findRecords(CONFIG.SHEETS.SCORES, { STUDENT_ID: studentId });
     var activities = getAllRecords(CONFIG.SHEETS.ACTIVITIES);
 
-    var scoreDetails = scores.map(function(score) {
-      var activity = activities.find(function(a) { return a.ACTIVITY_ID === score.ACTIVITY_ID; });
-      return Object.assign({}, score, {
-        activityName: activity ? activity.ACTIVITY_NAME : 'Unknown',
-        activityType: activity ? activity.ACTIVITY_TYPE : 'Unknown',
-        maxScore: activity ? activity.MAX_SCORE : 0
-      });
+    // FIX: only show activities that apply to this student's grade level.
+    //      An activity with no GRADE_LEVEL is shared across all grades; an
+    //      activity with a specific GRADE_LEVEL only applies to that grade.
+    var studentGradeLevel = String(student.GRADE_LEVEL || '').trim();
+    var applicableActivities = activities.filter(function(a) {
+      var actGrade = String(a.GRADE_LEVEL || '').trim();
+      if (actGrade === '') return true;
+      return actGrade === studentGradeLevel;
     });
+
+    var scoreDetails = scores.map(function(score) {
+      var activity = applicableActivities.find(function(a) { return a.ACTIVITY_ID === score.ACTIVITY_ID; });
+      if (!activity) return null; // score belongs to an activity for a different grade
+      return Object.assign({}, score, {
+        activityName: activity.ACTIVITY_NAME,
+        activityType: activity.ACTIVITY_TYPE,
+        maxScore: activity.MAX_SCORE
+      });
+    }).filter(function(d) { return d !== null; });
 
     return createResponse({
       success: true,

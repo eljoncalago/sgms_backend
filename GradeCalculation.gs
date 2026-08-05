@@ -49,6 +49,18 @@ function calculateStudentGrades(studentId) {
   const allActivities = getAllRecords(CONFIG.SHEETS.ACTIVITIES);
   const studentScores = findRecords(CONFIG.SHEETS.SCORES, { STUDENT_ID: studentId });
 
+  // FIX: only count activities that apply to this student's grade level.
+  //      An activity with no GRADE_LEVEL (blank) is shared across all grades.
+  //      An activity with a specific GRADE_LEVEL only counts for students in
+  //      that grade — otherwise a Grade 3 student would be graded against
+  //      Grade 7 activities, and vice versa.
+  var studentGradeLevel = String(student.GRADE_LEVEL || '').trim();
+  var applicableActivities = allActivities.filter(function(a) {
+    var actGrade = String(a.GRADE_LEVEL || '').trim();
+    if (actGrade === '') return true; // shared across all grades
+    return actGrade === studentGradeLevel;
+  });
+
   const settings = getSettingsObject();
   const calculationMode = settings.CALCULATION_MODE || 'STRICT';
   const overallPassingPercent = parseFloat(settings.OVERALL_PASSING_PERCENT) || 50;
@@ -58,7 +70,7 @@ function calculateStudentGrades(studentId) {
 
   terms.forEach(function(term) {
     // IS_ACTIVE may be boolean true or the string "TRUE" depending on the sheet
-    var termActivities = allActivities.filter(function(a) {
+    var termActivities = applicableActivities.filter(function(a) {
       return a.TERM_ID === term.TERM_ID && (a.IS_ACTIVE === true || a.IS_ACTIVE === 'TRUE' || a.IS_ACTIVE === 'true');
     });
 

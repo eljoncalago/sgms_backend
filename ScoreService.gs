@@ -10,11 +10,27 @@ function handleSaveScore(payload, token) {
   try {
     const adminId = getAdminIdFromToken(token);
     const { studentId, activityId, rawScore } = payload;
-    
-    if (!studentId || !activityId || rawScore === undefined) {
+
+    // FIX: Excel import can send rawScore as a string (e.g. "85" or even
+    //      "85.0"). Coerce to a number so the range check below and the
+    //      value written to the sheet are always numeric. Without this,
+    //      a string "0" could pass the `=== undefined` guard but then fail
+    //      the numeric comparison, or be written as the string "0" which
+    //      later reads back as 0 in some contexts and '' in others.
+    const numericScore = Number(rawScore);
+
+    if (!studentId || !activityId || rawScore === undefined || rawScore === null || rawScore === '') {
       return createResponse({
         success: false,
         message: 'Student ID, activity ID, and raw score are required',
+        data: null
+      });
+    }
+
+    if (isNaN(numericScore)) {
+      return createResponse({
+        success: false,
+        message: 'Raw score must be a number',
         data: null
       });
     }
@@ -40,7 +56,7 @@ function handleSaveScore(payload, token) {
     }
     
     // Validate score
-    if (rawScore < CONFIG.VALIDATION.MIN_SCORE || rawScore > activity.MAX_SCORE) {
+    if (numericScore < CONFIG.VALIDATION.MIN_SCORE || numericScore > Number(activity.MAX_SCORE)) {
       return createResponse({
         success: false,
         message: `Score must be between ${CONFIG.VALIDATION.MIN_SCORE} and ${activity.MAX_SCORE}`,
@@ -58,7 +74,7 @@ function handleSaveScore(payload, token) {
       // Update existing score
       const oldScore = existingScores[0];
       const updates = {
-        RAW_SCORE: rawScore,
+        RAW_SCORE: numericScore,
         RECORDED_BY: adminId,
         UPDATED_AT: new Date().toISOString()
       };
@@ -71,7 +87,7 @@ function handleSaveScore(payload, token) {
         studentId,
         activityId,
         String(oldScore.RAW_SCORE),
-        String(rawScore),
+        String(numericScore),
         'web',
         `Updated score for ${student.ENGLISH_NAME} in ${activity.ACTIVITY_NAME}`
       );
@@ -87,7 +103,7 @@ function handleSaveScore(payload, token) {
         SCORE_ID: generateId('SCORE'),
         STUDENT_ID: studentId,
         ACTIVITY_ID: activityId,
-        RAW_SCORE: rawScore,
+        RAW_SCORE: numericScore,
         RECORDED_BY: adminId,
         RECORD_SOURCE: 'web',
         CREATED_AT: new Date().toISOString(),
@@ -102,7 +118,7 @@ function handleSaveScore(payload, token) {
         studentId,
         activityId,
         null,
-        String(rawScore),
+        String(numericScore),
         'web',
         `Saved score for ${student.ENGLISH_NAME} in ${activity.ACTIVITY_NAME}`
       );
@@ -181,8 +197,11 @@ function handleGetScores(payload) {
     let scores = getAllRecords(CONFIG.SHEETS.SCORES);
     
     // Filter by activity if specified
+    // FIX: string coercion — see findRecordById comment. The activityId
+    //      coming from the frontend is a string; the sheet value may not be.
     if (payload.activityId) {
-      scores = scores.filter(s => s.ACTIVITY_ID === payload.activityId);
+      var actIdStr = String(payload.activityId);
+      scores = scores.filter(s => String(s.ACTIVITY_ID) === actIdStr);
     }
     
     return createResponse({

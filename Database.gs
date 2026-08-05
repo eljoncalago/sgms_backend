@@ -48,7 +48,12 @@ function getAllRecords(sheetName) {
  */
 function findRecordById(sheetName, idField, id) {
   const records = getAllRecords(sheetName);
-  return records.find(record => record[idField] === id) || null;
+  // FIX: coerce both sides to string before comparing. Google Sheets can
+  //      store the same ID as a number in one cell and a string in another,
+  //      and strict === would then fail to match (e.g. 12345 !== '12345').
+  //      This caused "Student not found" during score import for some rows.
+  var idStr = String(id);
+  return records.find(record => String(record[idField]) === idStr) || null;
 }
 
 /**
@@ -57,9 +62,17 @@ function findRecordById(sheetName, idField, id) {
 function findRecords(sheetName, criteria) {
   const records = getAllRecords(sheetName);
   
+  // FIX: same string-coercion as findRecordById — see comment there.
+  //      This is used by handleSaveScore to find existing scores; strict
+  //      === missed matches when the sheet stored IDs as a different type.
+  var criteriaStr = {};
+  for (let key in criteria) {
+    criteriaStr[key] = String(criteria[key]);
+  }
+  
   return records.filter(record => {
-    for (let key in criteria) {
-      if (record[key] !== criteria[key]) {
+    for (let key in criteriaStr) {
+      if (String(record[key]) !== criteriaStr[key]) {
         return false;
       }
     }
@@ -81,7 +94,13 @@ function insertRecord(sheetName, record) {
   }
   
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  const row = headers.map(header => record[header] || '');
+  // FIX: use nullish coalescing (??) instead of || so a valid score of 0
+  //      is not silently replaced with an empty string. The old `|| ''`
+  //      treated 0, false, and '' all as falsy and dropped them.
+  const row = headers.map(header => {
+    const val = record[header];
+    return val === undefined || val === null ? '' : val;
+  });
   
   sheet.appendRow(row);
   return record;
@@ -188,9 +207,14 @@ function createDatabaseSheets() {
   ]);
   
   // Activities sheet
-  createSheetWithHeaders(CONFIG.SHEETS.ACTIVITIES, [
-    'ACTIVITY_ID', 'TERM_ID', 'ACTIVITY_NAME', 'ACTIVITY_TYPE', 
-    'MAX_SCORE', 'ACTIVITY_ORDER', 'IS_ACTIVE', 'CREATED_AT', 'UPDATED_AT'
+  // FIX: added GRADE_LEVEL column so activities can be grade-level-specific.
+  //      Without this column insertRecord() silently drops the GRADE_LEVEL
+  //      value and every activity is saved as "All Grades".
+  //      ensureSheetColumns() also adds it to EXISTING databases that were
+  //      created before this column existed.
+  ensureSheetColumns(CONFIG.SHEETS.ACTIVITIES, [
+    'ACTIVITY_ID', 'TERM_ID', 'ACTIVITY_NAME', 'ACTIVITY_TYPE',
+    'MAX_SCORE', 'GRADE_LEVEL', 'ACTIVITY_ORDER', 'IS_ACTIVE', 'CREATED_AT', 'UPDATED_AT'
   ]);
   
   // Scores sheet
