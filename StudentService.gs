@@ -89,7 +89,7 @@ function handleGetStudent(payload) {
 function handleCreateStudent(payload, token) {
   try {
     const adminId = getAdminIdFromToken(token);
-    const { thaiName, englishName, gradeLevel, sectionNumber, classNumber } = payload;
+    const { studentId, thaiName, englishName, gradeLevel, sectionNumber, classNumber } = payload;
     
     if (!thaiName || !englishName || !gradeLevel || !sectionNumber || !classNumber) {
       return createResponse({
@@ -99,8 +99,21 @@ function handleCreateStudent(payload, token) {
       });
     }
     
+    // Reject duplicate student IDs — the admin sets these manually, so a
+    // duplicate means a typo or a re-submit, not a fresh student.
+    if (studentId) {
+      const existing = findRecordById(CONFIG.SHEETS.STUDENTS, 'STUDENT_ID', studentId);
+      if (existing) {
+        return createResponse({
+          success: false,
+          message: 'Student ID already exists: ' + studentId,
+          data: null
+        });
+      }
+    }
+    
     const student = {
-      STUDENT_ID: generateId(CONFIG.VALIDATION.STUDENT_ID_PREFIX),
+      STUDENT_ID: studentId || generateId(CONFIG.VALIDATION.STUDENT_ID_PREFIX),
       THAI_NAME: thaiName,
       ENGLISH_NAME: englishName,
       GRADE_LEVEL: gradeLevel,
