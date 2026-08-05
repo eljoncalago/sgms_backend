@@ -52,8 +52,8 @@ function findRecordById(sheetName, idField, id) {
   //      store the same ID as a number in one cell and a string in another,
   //      and strict === would then fail to match (e.g. 12345 !== '12345').
   //      This caused "Student not found" during score import for some rows.
-  var idStr = String(id);
-  return records.find(record => String(record[idField]) === idStr) || null;
+  var idStr = String(id).trim();
+  return records.find(record => String(record[idField]).trim() === idStr) || null;
 }
 
 /**
@@ -67,12 +67,12 @@ function findRecords(sheetName, criteria) {
   //      === missed matches when the sheet stored IDs as a different type.
   var criteriaStr = {};
   for (let key in criteria) {
-    criteriaStr[key] = String(criteria[key]);
+    criteriaStr[key] = String(criteria[key]).trim();
   }
   
   return records.filter(record => {
     for (let key in criteriaStr) {
-      if (String(record[key]) !== criteriaStr[key]) {
+      if (String(record[key]).trim() !== criteriaStr[key]) {
         return false;
       }
     }
@@ -125,8 +125,11 @@ function updateRecord(sheetName, idField, id, updates) {
   }
   
   // Find the row
+  // FIX: coerce to string — same reason as findRecordById. The ID passed in
+  //      may be a string while the sheet cell holds a number, or vice versa.
+  var idStrUpdate = String(id).trim();
   for (let i = 1; i < data.length; i++) {
-    if (data[i][idIndex] === id) {
+    if (String(data[i][idIndex]).trim() === idStrUpdate) {
       // Update the row
       const updatedRow = [...data[i]];
       
@@ -171,8 +174,9 @@ function deleteRecord(sheetName, idField, id) {
   }
   
   // Find and delete the row
+  var idStrDelete = String(id).trim();
   for (let i = 1; i < data.length; i++) {
-    if (data[i][idIndex] === id) {
+    if (String(data[i][idIndex]).trim() === idStrDelete) {
       sheet.deleteRow(i + 1);
       return true;
     }
