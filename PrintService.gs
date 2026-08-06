@@ -2,100 +2,60 @@
  * SGMS Print Service
  * Generates official Excel/PDF report cards by filling a Google Drive template.
  *
- * Template requirements:
- *  - An Excel file (.xlsx) stored in Google Drive, converted to Google Sheets format
- *    (File → Save as Google Sheets) so Apps Script can write to it.
- *  - The first sheet must follow the EXACT cell layout specified in the
- *    SGMS Master Specification (Part 5 Appendix — Excel Grade Sheet Automation).
- *  - Two students fit per page, side by side (Student 1 left, Student 2 right).
- *  - Sheet name: "Grade Card" (or first sheet if not found by name)
+ * Refactor 1 — ONE STUDENT PER A4 PAGE (Student 2 removed):
+ *   Each student is written to its own cloned sheet (one A4 page). Only the
+ *   Student 1 cell mapping below is used. Cell layout matches the Excel Grade
+ *   Sheet Automation spec exactly.
  *
- * Cell mapping implemented here exactly matches the specification:
+ * Refactor 2 — BATCH PRINTING (no disconnect for ~400 students):
+ *   handleGeneratePrintReport now accepts batchIndex / totalBatches / workbookId.
+ *   The frontend sends students in small batches; each call clones pages into
+ *   ONE accumulating workbook (kept in Drive between calls) and only exports
+ *   the final PDF on the last batch. Every call stays well under the Apps
+ *   Script ~6-min ceiling, so a 400-student run finishes instead of dropping.
+ *
+ * Template requirements:
+ *  - An Excel file (.xlsx) in Google Drive, saved as Google Sheets.
+ *  - First sheet "Grade Card" follows the single-student layout below.
  *
  *   STUDENT INFORMATION
- *     Student 1 ID:     C4:E5        Student 2 ID:    W4:Y5
- *     Thai Name S1:     D9:G9        Thai Name S2:    X9:AA9
- *     English Name S1:  D12:G12      English Name S2: X12:AA12
- *     Year/Section S1:  I9:J9        Year/Section S2: AC9:AD9
- *     Class Number S1:  I12:J12      Class Number S2: AC12:AD12
- *     QR Code S1:       L4:O12       QR Code S2:      AF4:AI12
+ *     Student ID     C4:E5       Year/Section    I9:J9   (e.g. M3/3)
+ *     Thai Name      D9:G9       Class Number    I12:J12
+ *     English Name   D12:G12     QR Code         L4:O12
  *
  *   MIDTERM COLLECTIVE (rows 18-31)
- *     Activity names S1:   C18:D30      Activity names S2:  W18:X30
- *     Raw scores S1:       E18:E30      Raw scores S2:      Y18:Y30
- *     Perfect scores S1:   F18:F30      Perfect scores S2:  Z18:Z30
- *     Weight S1:           G16          Weight S2:          AA16
- *     Totals S1:           E31,F31      Totals S2:          Y31,Z31
- *     Equiv score S1:      G31          Equiv score S2:     AA31
- *     Pass/Fail S1:        H31          Pass/Fail S2:       AB31
+ *     Activity names C18:D30  Raw E18:E30  Perfect F18:F30  Weight G16
+ *     Totals E31,F31  Equiv G31  Pass/Fail H31
  *
- *   FINAL COLLECTIVE INITIAL (rows 18-23 cols I-N / AC-AH)
- *     Activity names S1:   I18:J22      Activity names S2:  AC18:AD22
- *     Raw scores S1:       K18:K22      Raw scores S2:      AE18:AE22
- *     Perfect scores S1:   L18:L22      Perfect scores S2:  AF18:AF22
- *     Weight S1:           M16          Weight S2:          AG16
- *     Totals S1:           K23,L23      Totals S2:          AE23,AF23
- *     Equiv score S1:      M23          Equiv score S2:     AG23
- *     Pass/Fail S1:        N23          Pass/Fail S2:       AH23
+ *   FINAL COLLECTIVE INITIAL (rows 18-23, cols I-N)
+ *     Activity names I18:J22  Raw K18:K22  Perfect L18:L22  Weight M16
+ *     Totals K23,L23  Equiv M23  Pass/Fail N23
  *
- *   FINAL COLLECTIVE FINAL (rows 27-31 cols I-N / AC-AH)
- *     Activity names S1:   I27:J30      Activity names S2:  AC27:AD30
- *     Raw scores S1:       K27:K30      Raw scores S2:      AE27:AE30
- *     Perfect scores S1:   L27:L30      Perfect scores S2:  AF27:AF30
- *     Weight S1:           M25          Weight S2:          AG25
- *     Totals S1:           K31,L31      Totals S2:          AE31,AF31
- *     Equiv score S1:      M31          Equiv score S2:     AG31
- *     Pass/Fail S1:        N31          Pass/Fail S2:       AH31
+ *   FINAL COLLECTIVE FINAL (rows 27-31, cols I-N)
+ *     Activity names I27:J30  Raw K27:K30  Perfect L27:L30  Weight M25
+ *     Totals K31,L31  Equiv M31  Pass/Fail N31
  *
  *   MIDTERM EXAMINATION (rows 36-42)
- *     Types S1:            C36:D41      Types S2:           W36:X41
- *     Raw scores S1:       E36:E41      Raw scores S2:      Y36:Y41
- *     Perfect scores S1:   F36:F41      Perfect scores S2:  Z36:Z41
- *     Weight S1:           G34          Weight S2:          AA34
- *     Totals S1:           E42,F42      Totals S2:          Y42,Z42
- *     Equiv score S1:      G42          Equiv score S2:     AA42
- *     Pass/Fail S1:        H42          Pass/Fail S2:       AB42
+ *     Types C36:D41  Raw E36:E41  Perfect F36:F41  Weight G34
+ *     Totals E42,F42  Equiv G42  Pass/Fail H42
  *
- *   FINAL EXAMINATION (rows 36-42 cols I-N / AC-AH)
- *     Types S1:            I36:J41      Types S2:           AC36:AD41
- *     Raw scores S1:       K36:K41      Raw scores S2:      AE36:AE41
- *     Perfect scores S1:   L36:L41      Perfect scores S2:  AF36:AF41
- *     Weight S1:           M34          Weight S2:          AG34
- *     Totals S1:           K42,L42      Totals S2:          AE42,AF42
- *     Equiv score S1:      M42          Equiv score S2:     AG42
- *     Pass/Fail S1:        N42          Pass/Fail S2:       AH42
+ *   FINAL EXAMINATION (rows 36-42, cols I-N)
+ *     Types I36:J41  Raw K36:K41  Perfect L36:L41  Weight M34
+ *     Totals K42,L42  Equiv M42  Pass/Fail N42
  *
  *   SUMMARY (rows 56-67)
- *     Midterm Coll S1:     G56:H56     Midterm Coll S2:    AA56:AB56
- *     Midterm Exam S1:     G59:H59     Midterm Exam S2:    AA58:AB58
- *     Total Final Coll S1: G62:H62     Total Final Coll S2:AA62:AB62
- *     Final Exam S1:       G65:H65     Final Exam S2:      AA65:AB65
- *     Overall S1:          G67:H67     Overall S2:         AA67:AB67
+ *     Midterm Coll G56:H56  Midterm Exam G59:H59  Total Final Coll G62:H62
+ *     Final Exam G65:H65    Overall G67:H67
  *
- *   SEMESTER GRADE SUMMARY TABLE — STUDENT 1 (col S, rows 18-43)
- *     S18 = midterm coll equiv (G31)
- *     S20 = midterm exam equiv (G42)
- *     S21:S22 = Stage 1 total
- *     S23 = Stage 1 pass/fail
- *     S28 = final coll initial equiv (M23)
- *     S29:S30 = Stage 2 total
- *     S31 = Stage 2 pass/fail
- *     S33 = final coll final equiv (M31)
- *     S34:S35 = Stage 3 total
- *     S36 = Stage 3 pass/fail
- *     S38 = final exam equiv (M42)
- *     S39:S40 = Stage 4 total
- *     S41 = Stage 4 pass/fail
- *     S43 = final cumulative semester score
- *
- *   SEMESTER GRADE SUMMARY TABLE — STUDENT 2 (col AM, same structure)
+ *   SEMESTER GRADE SUMMARY TABLE (col S, rows 18-43)
+ *     S18=Midterm Coll  S20=Midterm Exam  S21:S22=Stage1 total  S23=Stage1 PF
+ *     S28=Final Coll Init  S29:S30=Stage2 total  S31=Stage2 PF
+ *     S33=Final Coll Final  S34:S35=Stage3 total  S36=Stage3 PF
+ *     S38=Final Exam  S39:S40=Stage4 total  S41=Stage4 PF  S43=Final cumulative
  */
 
 // ─── Column letter helpers ────────────────────────────────────────────────────
 
-/**
- * Convert a column letter (e.g. "A", "Z", "AA") to a 1-based column index.
- */
 function colLetterToIndex(letter) {
   letter = letter.toUpperCase();
   var idx = 0;
@@ -157,21 +117,15 @@ function passFail(score, threshold) {
 // ─── QR code insertion ───────────────────────────────────────────────────────
 
 /**
- * Insert a QR code image for a student into the template sheet.
- * The QR encodes the student's QR token so it can be scanned later.
- * The image is resized to fit entirely inside the assigned merged cell range.
+ * Insert a QR code image for a student into L4:O12 (Student 1 only).
  */
-function insertQRCode(sheet, student, isLeft) {
+function insertQRCode(sheet, student) {
   try {
-    // QR cell ranges from the spec:
-    //   Student 1: L4:O12  (cols L-O, rows 4-12)
-    //   Student 2: AF4:AI12 (cols AF-AI, rows 4-12)
-    var startCol = isLeft ? COL.L : COL.AF;
+    var startCol = COL.L;
     var startRow = 4;
-    var endCol   = isLeft ? COL.O : COL.AI;
+    var endCol   = COL.O;
     var endRow   = 12;
 
-    // Look up the student's active QR token
     var qrTokens = findRecords(CONFIG.SHEETS.QR_TOKENS, {
       STUDENT_ID: student.STUDENT_ID,
       IS_ACTIVE: true
@@ -181,7 +135,6 @@ function insertQRCode(sheet, student, isLeft) {
     var token = qrTokens[0].TOKEN;
     var qrUrl = generateQRUrl(token);
 
-    // Fetch the QR image from the public API
     var qrBlob = UrlFetchApp.fetch(qrUrl).getBlob();
     var qrImage = sheet.insertImage(
       qrBlob,
@@ -191,9 +144,7 @@ function insertQRCode(sheet, student, isLeft) {
       endRow - startRow + 1
     );
 
-    // Offset to center within the merged range
     qrImage.setAnchorCell(sheet.getRange(startRow, startCol));
-    // Set a small inset so the QR sits nicely inside the border
     qrImage.setAnchorCellXOffset(2);
     qrImage.setAnchorCellYOffset(2);
   } catch (e) {
@@ -208,15 +159,12 @@ function insertQRCode(sheet, student, isLeft) {
  * Returns { activities: [{name, type, maxScore, rawScore}], weight, passingPercent }
  */
 function buildTermData(termId, studentId, studentGradeLevel) {
-  // FIX: filter by grade level — include activity if it has no GRADE_LEVEL (shared)
-  //      OR its GRADE_LEVEL matches the student's grade level.
   var gradeToMatch = String(studentGradeLevel || '').trim();
   var allActivities = getAllRecords(CONFIG.SHEETS.ACTIVITIES);
   var termActivities = allActivities.filter(function(a) {
     if (a.TERM_ID !== termId) return false;
     if (!(a.IS_ACTIVE === true || a.IS_ACTIVE === 'TRUE' || a.IS_ACTIVE === 'true')) return false;
     var actGrade = String(a.GRADE_LEVEL || '').trim();
-    // Include if activity is shared (no grade) OR matches student's grade
     if (actGrade !== '' && gradeToMatch !== '' && actGrade !== gradeToMatch) return false;
     return true;
   });
@@ -259,108 +207,59 @@ function calcEquiv(activities, weight) {
   };
 }
 
-// ─── Fill one student's column ────────────────────────────────────────────────
+// ─── Fill one student's page (Student 1 only) ─────────────────────────────────
 
 /**
- * Fill all cells for one student on the sheet.
+ * Fill all cells for one student on a sheet (one student per A4 page).
  *
  * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
  * @param {object} student  — STUDENTS record
- * @param {object} terms    — keyed by term role: midColl, midExam, finCollInit, finCollFin, finExam
- * @param {boolean} isLeft  — true = Student 1 (left), false = Student 2 (right)
+ * @param {object} terms    — keyed by: midColl, midExam, finCollInit, finCollFin, finExam
  * @param {object} settings — SETTINGS object
  * @param {number} stageNum — semester stage to generate (1-4); defaults to 4 (all)
  */
-function fillStudentColumns(sheet, student, terms, isLeft, settings, stageNum) {
+function fillStudentColumns(sheet, student, terms, settings, stageNum) {
   stageNum = stageNum || 4;
   var s1 = settings || {};
 
-  // ── Column offsets ──
-  var cID     = isLeft ? COL.C  : COL.W;
-  var cThai   = isLeft ? COL.D  : COL.X;
-  var cEng    = isLeft ? COL.D  : COL.X;
-  var cYrSec  = isLeft ? COL.I  : COL.AC;
-  var cClsNum = isLeft ? COL.I  : COL.AC;
+  // Student 1 column mapping (Student 2 removed — one student per page)
+  var cID = COL.C, cThai = COL.D, cEng = COL.D, cYrSec = COL.I, cClsNum = COL.I;
 
-  // Midterm Collective columns
-  var cMC_name  = isLeft ? COL.C  : COL.W;
-  var cMC_raw   = isLeft ? COL.E  : COL.Y;
-  var cMC_max   = isLeft ? COL.F  : COL.Z;
-  var cMC_wt    = isLeft ? COL.G  : COL.AA;
-  var cMC_eq    = isLeft ? COL.G  : COL.AA;
-  var cMC_pf    = isLeft ? COL.H  : COL.AB;
-  var rowMC_wt  = 16;
-  var rowMC_st  = 18;
-  var rowMC_end = 30;
-  var rowMC_tot = 31;
+  // Midterm Collective
+  var cMC_name = COL.C, cMC_raw = COL.E, cMC_max = COL.F, cMC_wt = COL.G, cMC_eq = COL.G, cMC_pf = COL.H;
+  var rowMC_wt = 16, rowMC_st = 18, rowMC_end = 30, rowMC_tot = 31;
 
-  // Final Collective Initial columns
-  var cFCI_name  = isLeft ? COL.I  : COL.AC;
-  var cFCI_raw   = isLeft ? COL.K  : COL.AE;
-  var cFCI_max   = isLeft ? COL.L  : COL.AF;
-  var cFCI_wt    = isLeft ? COL.M  : COL.AG;
-  var cFCI_eq    = isLeft ? COL.M  : COL.AG;
-  var cFCI_pf    = isLeft ? COL.N  : COL.AH;
-  var rowFCI_wt  = 16;
-  var rowFCI_st  = 18;
-  var rowFCI_tot = 23;
+  // Final Collective Initial
+  var cFCI_name = COL.I, cFCI_raw = COL.K, cFCI_max = COL.L, cFCI_wt = COL.M, cFCI_eq = COL.M, cFCI_pf = COL.N;
+  var rowFCI_wt = 16, rowFCI_st = 18, rowFCI_tot = 23;
 
-  // Final Collective Final columns (shares col layout with FCI)
-  var cFCF_name  = isLeft ? COL.I  : COL.AC;
-  var cFCF_raw   = isLeft ? COL.K  : COL.AE;
-  var cFCF_max   = isLeft ? COL.L  : COL.AF;
-  var cFCF_wt    = isLeft ? COL.M  : COL.AG;
-  var cFCF_eq    = isLeft ? COL.M  : COL.AG;
-  var cFCF_pf    = isLeft ? COL.N  : COL.AH;
-  var rowFCF_wt  = 25;
-  var rowFCF_st  = 27;
-  var rowFCF_tot = 31;
+  // Final Collective Final
+  var cFCF_name = COL.I, cFCF_raw = COL.K, cFCF_max = COL.L, cFCF_wt = COL.M, cFCF_eq = COL.M, cFCF_pf = COL.N;
+  var rowFCF_wt = 25, rowFCF_st = 27, rowFCF_tot = 31;
 
-  // Midterm Exam columns
-  var cME_name  = isLeft ? COL.C  : COL.W;
-  var cME_raw   = isLeft ? COL.E  : COL.Y;
-  var cME_max   = isLeft ? COL.F  : COL.Z;
-  var cME_wt    = isLeft ? COL.G  : COL.AA;
-  var cME_eq    = isLeft ? COL.G  : COL.AA;
-  var cME_pf    = isLeft ? COL.H  : COL.AB;
-  var rowME_wt  = 34;
-  var rowME_st  = 36;
-  var rowME_end = 41;
-  var rowME_tot = 42;
+  // Midterm Examination
+  var cME_name = COL.C, cME_raw = COL.E, cME_max = COL.F, cME_wt = COL.G, cME_eq = COL.G, cME_pf = COL.H;
+  var rowME_wt = 34, rowME_st = 36, rowME_end = 41, rowME_tot = 42;
 
-  // Final Exam columns
-  var cFE_name  = isLeft ? COL.I  : COL.AC;
-  var cFE_raw   = isLeft ? COL.K  : COL.AE;
-  var cFE_max   = isLeft ? COL.L  : COL.AF;
-  var cFE_wt    = isLeft ? COL.M  : COL.AG;
-  var cFE_eq    = isLeft ? COL.M  : COL.AG;
-  var cFE_pf    = isLeft ? COL.N  : COL.AH;
-  var rowFE_wt  = 34;
-  var rowFE_st  = 36;
-  var rowFE_end = 41;
-  var rowFE_tot = 42;
+  // Final Examination
+  var cFE_name = COL.I, cFE_raw = COL.K, cFE_max = COL.L, cFE_wt = COL.M, cFE_eq = COL.M, cFE_pf = COL.N;
+  var rowFE_wt = 34, rowFE_st = 36, rowFE_end = 41, rowFE_tot = 42;
 
-  // Summary columns
-  var cSumMC  = isLeft ? COL.G  : COL.AA;
-  var cSumME  = isLeft ? COL.G  : COL.AA;
-  var cSumFC  = isLeft ? COL.G  : COL.AA;
-  var cSumFE  = isLeft ? COL.G  : COL.AA;
-  var cSumOv  = isLeft ? COL.G  : COL.AA;
+  // Summary + semester table (Student 1)
+  var cSum = COL.G;
+  var cSGST = COL.S;
 
-  // Semester grade summary table column
-  var cSGST   = isLeft ? COL.S  : COL.AM;
-
-  // ── Student info ──────────────────────────────────────────────────────────
+  // ── Student info ──
   writeCell(sheet, 4,  cID,     student.STUDENT_ID);
   writeCell(sheet, 9,  cThai,   student.THAI_NAME);
   writeCell(sheet, 12, cEng,    student.ENGLISH_NAME);
   writeCell(sheet, 9,  cYrSec,  'M' + student.GRADE_LEVEL + '/' + student.SECTION_NUMBER);
   writeCell(sheet, 12, cClsNum, student.CLASS_NUMBER);
 
-  // ── QR Code ────────────────────────────────────────────────────────────────
-  insertQRCode(sheet, student, isLeft);
+  // ── QR Code (L4:O12) ──
+  insertQRCode(sheet, student);
 
-  // ── Midterm Collective ────────────────────────────────────────────────────
+  // ── Midterm Collective ──
   var mc = terms.midColl;
   writeCell(sheet, rowMC_wt, cMC_wt, mc.weight);
   mc.activities.forEach(function(act, i) {
@@ -376,7 +275,7 @@ function fillStudentColumns(sheet, student, terms, isLeft, settings, stageNum) {
   writeCell(sheet, rowMC_tot, cMC_eq,  mcCalc.equiv);
   writeCell(sheet, rowMC_tot, cMC_pf,  passFail(mcCalc.equiv, s1.MIDTERM_COLLECTIVE_PASSING || 50));
 
-  // ── Final Collective Initial ──────────────────────────────────────────────
+  // ── Final Collective Initial ──
   var fci = terms.finCollInit;
   writeCell(sheet, rowFCI_wt, cFCI_wt, fci.weight);
   fci.activities.forEach(function(act, i) {
@@ -392,7 +291,7 @@ function fillStudentColumns(sheet, student, terms, isLeft, settings, stageNum) {
   writeCell(sheet, rowFCI_tot, cFCI_eq,  fciCalc.equiv);
   writeCell(sheet, rowFCI_tot, cFCI_pf,  passFail(fciCalc.equiv, s1.FINAL_COLLECTIVE_INITIAL_PASSING || 50));
 
-  // ── Final Collective Final ────────────────────────────────────────────────
+  // ── Final Collective Final ──
   var fcf = terms.finCollFin;
   writeCell(sheet, rowFCF_wt, cFCF_wt, fcf.weight);
   fcf.activities.forEach(function(act, i) {
@@ -408,7 +307,7 @@ function fillStudentColumns(sheet, student, terms, isLeft, settings, stageNum) {
   writeCell(sheet, rowFCF_tot, cFCF_eq,  fcfCalc.equiv);
   writeCell(sheet, rowFCF_tot, cFCF_pf,  passFail(fcfCalc.equiv, s1.FINAL_COLLECTIVE_FINAL_PASSING || 50));
 
-  // ── Midterm Examination ───────────────────────────────────────────────────
+  // ── Midterm Examination ──
   var me = terms.midExam;
   writeCell(sheet, rowME_wt, cME_wt, me.weight);
   me.activities.forEach(function(act, i) {
@@ -424,7 +323,7 @@ function fillStudentColumns(sheet, student, terms, isLeft, settings, stageNum) {
   writeCell(sheet, rowME_tot, cME_eq,  meCalc.equiv);
   writeCell(sheet, rowME_tot, cME_pf,  passFail(meCalc.equiv, s1.MIDTERM_EXAM_PASSING || 50));
 
-  // ── Final Examination ─────────────────────────────────────────────────────
+  // ── Final Examination ──
   var fe = terms.finExam;
   writeCell(sheet, rowFE_wt, cFE_wt, fe.weight);
   fe.activities.forEach(function(act, i) {
@@ -440,18 +339,17 @@ function fillStudentColumns(sheet, student, terms, isLeft, settings, stageNum) {
   writeCell(sheet, rowFE_tot, cFE_eq,  feCalc.equiv);
   writeCell(sheet, rowFE_tot, cFE_pf,  passFail(feCalc.equiv, s1.FINAL_EXAM_PASSING || 50));
 
-  // ── Score Summary (rows 56-67) ────────────────────────────────────────────
-  writeCell(sheet, 56, cSumMC, mcCalc.equiv);         // Midterm Collective
-  // Student 1 Midterm Exam summary = row 59; Student 2 = row 58 (per spec)
-  writeCell(sheet, isLeft ? 59 : 58, cSumME, meCalc.equiv);
-  writeCell(sheet, 62, cSumFC, fciCalc.equiv + fcfCalc.equiv);  // Total Final Collective
-  writeCell(sheet, 65, cSumFE, feCalc.equiv);         // Final Exam
+  // ── Score Summary (rows 56-67) ──
+  writeCell(sheet, 56, cSum, mcCalc.equiv);                       // Midterm Collective
+  writeCell(sheet, 59, cSum, meCalc.equiv);                       // Midterm Examination
+  writeCell(sheet, 62, cSum, fciCalc.equiv + fcfCalc.equiv);      // Total Final Collective
+  writeCell(sheet, 65, cSum, feCalc.equiv);                       // Final Examination
   var overall = mcCalc.equiv + meCalc.equiv + fciCalc.equiv + fcfCalc.equiv + feCalc.equiv;
-  writeCell(sheet, 67, cSumOv, Math.round(overall * 100) / 100);
+  writeCell(sheet, 67, cSum, Math.round(overall * 100) / 100);   // Overall
 
-  // ── Semester Grade Summary Table ──────────────────────────────────────────
-  writeCell(sheet, 18, cSGST, mcCalc.equiv);           // S18/AM18 — Midterm Coll
-  writeCell(sheet, 20, cSGST, meCalc.equiv);           // S20/AM20 — Midterm Exam
+  // ── Semester Grade Summary Table (col S, rows 18-43) ──
+  writeCell(sheet, 18, cSGST, mcCalc.equiv);   // S18 — Midterm Collective
+  writeCell(sheet, 20, cSGST, meCalc.equiv);   // S20 — Midterm Examination
 
   // Stage 1: Midterm Collective + Midterm Examination
   var st1 = mcCalc.equiv + meCalc.equiv;
@@ -460,7 +358,7 @@ function fillStudentColumns(sheet, student, terms, isLeft, settings, stageNum) {
   writeCell(sheet, 23, cSGST, passFail(st1, s1.STAGE1_PASSING));
 
   if (stageNum >= 2) {
-    writeCell(sheet, 28, cSGST, fciCalc.equiv);        // S28/AM28 — Final Coll Init
+    writeCell(sheet, 28, cSGST, fciCalc.equiv);   // S28 — Final Collective Initial
     var st2 = st1 + fciCalc.equiv;
     writeCell(sheet, 29, cSGST, st2);
     writeCell(sheet, 30, cSGST, st2);
@@ -468,7 +366,7 @@ function fillStudentColumns(sheet, student, terms, isLeft, settings, stageNum) {
   }
 
   if (stageNum >= 3) {
-    writeCell(sheet, 33, cSGST, fcfCalc.equiv);        // S33/AM33 — Final Coll Fin
+    writeCell(sheet, 33, cSGST, fcfCalc.equiv);   // S33 — Final Collective Final
     var st3 = st1 + fciCalc.equiv + fcfCalc.equiv;
     writeCell(sheet, 34, cSGST, st3);
     writeCell(sheet, 35, cSGST, st3);
@@ -476,12 +374,12 @@ function fillStudentColumns(sheet, student, terms, isLeft, settings, stageNum) {
   }
 
   if (stageNum >= 4) {
-    writeCell(sheet, 38, cSGST, feCalc.equiv);         // S38/AM38 — Final Exam
+    writeCell(sheet, 38, cSGST, feCalc.equiv);    // S38 — Final Examination
     var st4 = Math.round(overall * 100) / 100;
     writeCell(sheet, 39, cSGST, st4);
     writeCell(sheet, 40, cSGST, st4);
     writeCell(sheet, 41, cSGST, passFail(st4, s1.STAGE4_PASSING || s1.OVERALL_PASSING_PERCENT));
-    writeCell(sheet, 43, cSGST, st4);                  // Final cumulative semester score
+    writeCell(sheet, 43, cSGST, st4);            // S43 — Final cumulative semester score
   }
 }
 
@@ -494,6 +392,15 @@ function handleGeneratePrintReport(payload, token) {
     var templateId = payload.templateId;
     var stageNum   = parseInt(payload.stage || 4, 10);
 
+    // Refactor 2 — batch support. Frontend sends students in small batches so
+    // each call stays well under the Apps Script ~6-min limit and a 400-student
+    // run finishes instead of disconnecting. One accumulating workbook is kept
+    // in Drive (workbookId) across batches; PDF is exported only on the last.
+    var batchIndex   = payload.batchIndex !== undefined ? parseInt(payload.batchIndex, 10) : 0;
+    var totalBatches = payload.totalBatches !== undefined ? parseInt(payload.totalBatches, 10) : 1;
+    var workbookId   = payload.workbookId || null;
+    var isLastBatch  = (totalBatches <= 1) || (batchIndex >= totalBatches - 1);
+
     if (!studentIds || !Array.isArray(studentIds) || studentIds.length === 0) {
       return createResponse({ success: false, message: 'Student IDs array is required', data: null });
     }
@@ -501,25 +408,9 @@ function handleGeneratePrintReport(payload, token) {
       return createResponse({ success: false, message: 'Template file ID is required. Set PRINT_TEMPLATE_ID in Settings.', data: null });
     }
 
-    // ── Open template ────────────────────────────────────────────────
-    var templateFile;
-    try {
-      templateFile = DriveApp.getFileById(templateId);
-    } catch (e) {
-      return createResponse({ success: false, message: 'Cannot access template file: ' + e.toString(), data: null });
-    }
-
-    // Make a working copy
-    var copyName  = 'SGMS_Report_' + new Date().toISOString().slice(0, 10) + '_Stage' + stageNum;
-    var copyFile  = templateFile.makeCopy(copyName);
-    var copyId    = copyFile.getId();
-    var workbook  = SpreadsheetApp.openById(copyId);
-    var sheet     = workbook.getSheetByName('Grade Card') || workbook.getSheets()[0];
-
-    // ── Fetch settings ────────────────────────────────────────────────
+    // ── Settings + grading terms ──
     var settings = getSettingsObject();
 
-    // ── Load grading terms (sorted by order) ──────────────────────────
     var allTerms = getAllRecords(CONFIG.SHEETS.GRADING_TERMS);
     allTerms.sort(function(a, b) { return a.TERM_ORDER - b.TERM_ORDER; });
 
@@ -538,88 +429,112 @@ function handleGeneratePrintReport(payload, token) {
       finExam:    findTerm(['final exam', 'fin exam', 'final examination']),
     };
 
-    // ── Fill pages — 2 students per page ──────────────────────────────
+    function buildAll(student) {
+      var sid = student.STUDENT_ID;
+      var studentGradeLevel = student.GRADE_LEVEL || '';
+      var result = {};
+      Object.keys(termRoles).forEach(function(role) {
+        var term = termRoles[role];
+        result[role] = term.TERM_ID
+          ? buildTermData(term.TERM_ID, sid, studentGradeLevel)
+          : { activities: [], weight: 0, passingPercent: 50, termName: role };
+      });
+      return result;
+    }
+
+    var copyName = 'SGMS_Report_' + new Date().toISOString().slice(0, 10) + '_Stage' + stageNum;
+    var copyId;
+    var workbook;
+    var templateSheet; // clean template sheet kept for cloning (one student per page)
+
+    if (workbookId) {
+      // Continue an existing accumulation workbook (subsequent batches)
+      try {
+        workbook = SpreadsheetApp.openById(workbookId);
+      } catch (e) {
+        return createResponse({ success: false, message: 'Cannot reopen workbook: ' + e.toString(), data: null });
+      }
+      copyId = workbookId;
+      templateSheet = workbook.getSheets()[0];
+    } else {
+      // First batch: make a fresh copy of the template
+      var templateFile;
+      try {
+        templateFile = DriveApp.getFileById(templateId);
+      } catch (e) {
+        return createResponse({ success: false, message: 'Cannot access template file: ' + e.toString(), data: null });
+      }
+      var copyFile = templateFile.makeCopy(copyName);
+      copyId = copyFile.getId();
+      workbook = SpreadsheetApp.openById(copyId);
+      templateSheet = workbook.getSheetByName('Grade Card') || workbook.getSheets()[0];
+    }
+
+    // ── Fill one student per cloned page (Refactor 1: Student 2 removed) ──
     var errors = [];
     var processed = 0;
 
-    for (var i = 0; i < studentIds.length; i += 2) {
-      var id1 = studentIds[i];
-      var id2 = studentIds[i + 1] || null;
-
-      var student1 = id1 ? findRecordById(CONFIG.SHEETS.STUDENTS, 'STUDENT_ID', id1) : null;
-      var student2 = id2 ? findRecordById(CONFIG.SHEETS.STUDENTS, 'STUDENT_ID', id2) : null;
-
-      if (i > 0) {
-        var pageSheet = workbook.duplicateActiveSheet();
-        pageSheet.setName('Page ' + (Math.floor(i / 2) + 1));
-        sheet = pageSheet;
+    for (var i = 0; i < studentIds.length; i++) {
+      var studentId = studentIds[i];
+      var student = findRecordById(CONFIG.SHEETS.STUDENTS, 'STUDENT_ID', studentId);
+      if (!student) {
+        errors.push('Student (' + studentId + '): not found');
+        continue;
       }
 
-      // FIX: buildAll now accepts the student object and passes the student's
-      //      GRADE_LEVEL to buildTermData so it filters activities correctly.
-      function buildAll(student) {
-        var studentId = student.STUDENT_ID;
-        var studentGradeLevel = student.GRADE_LEVEL || '';
-        var result = {};
-        Object.keys(termRoles).forEach(function(role) {
-          var term = termRoles[role];
-          result[role] = term.TERM_ID
-            ? buildTermData(term.TERM_ID, studentId, studentGradeLevel)
-            : { activities: [], weight: 0, passingPercent: 50, termName: role };
-        });
-        return result;
-      }
+      // Clone the clean template sheet so every page keeps the merged-cell layout
+      var pageSheet = templateSheet.copyTo(workbook);
+      pageSheet.setName('Page ' + (workbook.getNumSheets() - 1));
 
-      if (student1) {
-        try {
-          fillStudentColumns(sheet, student1, buildAll(student1), true, settings, stageNum);
-          processed++;
-        } catch (e) {
-          errors.push('Student 1 (' + id1 + '): ' + e.toString());
-        }
-      }
-
-      if (student2) {
-        try {
-          fillStudentColumns(sheet, student2, buildAll(student2), false, settings, stageNum);
-          processed++;
-        } catch (e) {
-          errors.push('Student 2 (' + id2 + '): ' + e.toString());
-        }
+      try {
+        fillStudentColumns(pageSheet, student, buildAll(student), settings, stageNum);
+        processed++;
+      } catch (e) {
+        errors.push('Student (' + studentId + '): ' + e.toString());
       }
     }
 
-    // ── Flush and export as PDF ───────────────────────────────────────
     SpreadsheetApp.flush();
 
-    var pdfBlob = workbook.getAs('application/pdf');
-    pdfBlob.setName(copyName + '.pdf');
-    var pdfFolder = DriveApp.getRootFolder();
-    var pdfFile = pdfFolder.createFile(pdfBlob);
-    pdfFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-    var pdfUrl = 'https://drive.google.com/file/d/' + pdfFile.getId() + '/view';
-
+    var pdfUrl = null;
     var sheetUrl = 'https://docs.google.com/spreadsheets/d/' + copyId + '/edit';
 
-    createAuditLog(
-      adminId,
-      'GENERATE_PRINT_REPORT',
-      null, null, null,
-      JSON.stringify({ studentIds: studentIds, stage: stageNum, processed: processed }),
-      'web',
-      'Generated Stage ' + stageNum + ' report cards for ' + processed + ' students'
-    );
+    if (isLastBatch) {
+      // Remove the clean template sheet so it is not an empty page in the PDF
+      try { workbook.deleteSheet(templateSheet); } catch (e) { /* ignore */ }
+      SpreadsheetApp.flush();
+
+      var pdfBlob = workbook.getAs('application/pdf');
+      pdfBlob.setName(copyName + '.pdf');
+      var pdfFile = DriveApp.getRootFolder().createFile(pdfBlob);
+      pdfFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      pdfUrl = 'https://drive.google.com/file/d/' + pdfFile.getId() + '/view';
+
+      createAuditLog(
+        adminId,
+        'GENERATE_PRINT_REPORT',
+        null, null, null,
+        JSON.stringify({ stage: stageNum, processed: processed, batches: totalBatches }),
+        'web',
+        'Generated Stage ' + stageNum + ' report cards (' + totalBatches + ' batch' + (totalBatches !== 1 ? 'es' : '') + ')'
+      );
+    }
 
     return createResponse({
       success: true,
-      message: 'Report cards generated for ' + processed + ' student' + (processed !== 1 ? 's' : '') +
-               (errors.length > 0 ? ' (' + errors.length + ' errors)' : ''),
+      message: isLastBatch
+        ? 'Report cards generated for ' + processed + ' student' + (processed !== 1 ? 's' : '') + (errors.length > 0 ? ' (' + errors.length + ' errors)' : '')
+        : 'Batch ' + (batchIndex + 1) + ' of ' + totalBatches + ' done (' + processed + ' students)',
       data: {
         processed: processed,
         errors: errors,
+        batchIndex: batchIndex,
+        totalBatches: totalBatches,
+        isLastBatch: isLastBatch,
+        workbookId: copyId,
         pdfUrl: pdfUrl,
         spreadsheetUrl: sheetUrl,
-        fileUrl: pdfUrl,
+        fileUrl: pdfUrl
       }
     });
 
