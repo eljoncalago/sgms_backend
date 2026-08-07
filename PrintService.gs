@@ -99,11 +99,229 @@ var COL = {
 // ─── Safe cell write ──────────────────────────────────────────────────────────
 
 function writeCell(sheet, row, col, value) {
-  if (value === null || value === undefined || value === '') return;
   try {
-    sheet.getRange(row, col).setValue(value);
+    sheet.getRange(row, col).setValue(value === null || value === undefined ? '' : value);
   } catch (e) {
     Logger.log('writeCell error [' + row + ',' + col + ']: ' + e);
+  }
+}
+
+function writeFormula(sheet, row, col, formula) {
+  try {
+    sheet.getRange(row, col).setFormula(formula);
+  } catch (e) {
+    Logger.log('writeFormula error [' + row + ',' + col + ']: ' + e);
+  }
+}
+
+function setReportSettingsSheet_(workbook, settings) {
+  var sheet = workbook.getSheetByName('Report Settings');
+  if (!sheet) {
+    sheet = workbook.insertSheet('Report Settings');
+    sheet.getRange('A1:C1').setValues([['SETTING_KEY', 'SETTING_VALUE', 'DESCRIPTION']]);
+  }
+
+  var values = [
+    ['MIDTERM_COLLECTIVE_PASSING', parseFloat(settings.MIDTERM_COLLECTIVE_PASSING) || 50, 'Midterm Collective'],
+    ['FINAL_COLLECTIVE_INITIAL_PASSING', parseFloat(settings.FINAL_COLLECTIVE_INITIAL_PASSING) || 50, 'Final Collective Initial'],
+    ['FINAL_COLLECTIVE_FINAL_PASSING', parseFloat(settings.FINAL_COLLECTIVE_FINAL_PASSING) || 50, 'Final Collective Final'],
+    ['MIDTERM_EXAM_PASSING', parseFloat(settings.MIDTERM_EXAM_PASSING) || 50, 'Midterm Examination'],
+    ['FINAL_EXAM_PASSING', parseFloat(settings.FINAL_EXAM_PASSING) || 50, 'Final Examination'],
+    ['STAGE1_PASSING', parseFloat(settings.STAGE1_PASSING) || 40, 'Stage 1'],
+    ['STAGE2_PASSING', parseFloat(settings.STAGE2_PASSING) || 55, 'Stage 2'],
+    ['STAGE3_PASSING', parseFloat(settings.STAGE3_PASSING) || 65, 'Stage 3'],
+    ['STAGE4_PASSING', parseFloat(settings.STAGE4_PASSING || settings.OVERALL_PASSING_PERCENT) || 50, 'Stage 4']
+  ];
+  sheet.getRange(2, 1, values.length, 3).setValues(values);
+  sheet.setFrozenRows(1);
+  sheet.hideSheet();
+  return sheet;
+}
+
+function reportSettingFormula_(key) {
+  var keys = {
+    MIDTERM_COLLECTIVE_PASSING: 2,
+    FINAL_COLLECTIVE_INITIAL_PASSING: 3,
+    FINAL_COLLECTIVE_FINAL_PASSING: 4,
+    MIDTERM_EXAM_PASSING: 5,
+    FINAL_EXAM_PASSING: 6,
+    STAGE1_PASSING: 7,
+    STAGE2_PASSING: 8,
+    STAGE3_PASSING: 9,
+    STAGE4_PASSING: 10
+  };
+  return "'Report Settings'!$B$" + (keys[key] || 2);
+}
+
+function reportJobKey_(jobId, batchIndex) {
+  return 'SGMS_PRINT_JOB_' + String(jobId || 'legacy').replace(/[^A-Za-z0-9_-]/g, '_') + '_' + batchIndex;
+}
+
+function getCompletedPrintBatch_(jobId, batchIndex) {
+  if (!jobId) return null;
+  try {
+    var value = PropertiesService.getScriptProperties().getProperty(reportJobKey_(jobId, batchIndex));
+    return value ? JSON.parse(value) : null;
+  } catch (e) {
+    Logger.log('getCompletedPrintBatch error: ' + e);
+    return null;
+  }
+}
+
+function saveCompletedPrintBatch_(jobId, batchIndex, result) {
+  if (!jobId) return;
+  try {
+    PropertiesService.getScriptProperties().setProperty(
+      reportJobKey_(jobId, batchIndex),
+      JSON.stringify(result)
+    );
+  } catch (e) {
+    Logger.log('saveCompletedPrintBatch error: ' + e);
+  }
+}
+
+function buildPrintContext_() {
+  var students = getAllRecords(CONFIG.SHEETS.STUDENTS);
+  var activities = getAllRecords(CONFIG.SHEETS.ACTIVITIES);
+  var scores = getAllRecords(CONFIG.SHEETS.SCORES);
+  var qrTokens = getAllRecords(CONFIG.SHEETS.QR_TOKENS);
+  var terms = getAllRecords(CONFIG.SHEETS.GRADING_TERMS);
+  var studentById = {};
+  var scoresByStudent = {};
+  var qrTokensByStudent = {};
+
+  students.forEach(function(student) {
+    studentById[String(student.STUDENT_ID).trim()] = student;
+  });
+  scores.forEach(function(score) {
+    var key = String(score.STUDENT_ID).trim();
+    if (!scoresByStudent[key]) scoresByStudent[key] = [];
+    scoresByStudent[key].push(score);
+  });
+  qrTokens.forEach(function(qrToken) {
+    var active = qrToken.IS_ACTIVE === true || String(qrToken.IS_ACTIVE).toLowerCase() === 'true';
+    if (!active) return;
+    var key = String(qrToken.STUDENT_ID).trim();
+    if (!qrTokensByStudent[key]) qrTokensByStudent[key] = [];
+    qrTokensByStudent[key].push(qrToken);
+  });
+
+  return {
+    students: students,
+    activities: activities,
+    terms: terms,
+    termById: terms.reduce(function(map, term) {
+      map[String(term.TERM_ID).trim()] = term;
+      return map;
+    }, {}),
+    scoresByStudent: scoresByStudent,
+    qrTokensByStudent: qrTokensByStudent,
+    studentById: studentById
+  };
+}
+
+function applyReportHighlights_(sheet) {
+  var inputColor = '#FFF2CC';
+  var formulaColor = '#D9EAF7';
+  var remarkColor = '#E2F0D9';
+  [
+    'C4:E5', 'D9:G9', 'D12:G12', 'I9:J9', 'I12:J12', 'L4:O12',
+    'C18:F30', 'G16', 'I18:L22', 'M16', 'I27:L30', 'M25',
+    'C36:F41', 'G34', 'I36:L41', 'M34'
+  ].forEach(function(range) {
+    sheet.getRange(range).setBackground(inputColor);
+  });
+  [
+    'E31:F31', 'G31', 'K23:L23', 'M23', 'K31:L31', 'M31',
+    'E42:F42', 'G42', 'K42:L42', 'M42',
+    'G56:H56', 'G59:H59', 'G62:H62', 'G65:H65', 'G67:H67',
+    'S18:S43'
+  ].forEach(function(range) {
+    sheet.getRange(range).setBackground(formulaColor);
+  });
+  ['H31', 'N23', 'N31', 'H42', 'N42', 'S23', 'S31', 'S36', 'S41']
+    .forEach(function(range) {
+      sheet.getRange(range).setBackground(remarkColor);
+    });
+}
+
+function removeSheetIfExists_(workbook, name) {
+  var existing = workbook.getSheetByName(name);
+  if (existing && workbook.getSheets().length > 1) {
+    workbook.deleteSheet(existing);
+  }
+}
+
+function createPdfPart_(workbook, pageSheets, copyName, batchIndex) {
+  var partBook = SpreadsheetApp.create(copyName + '_Part' + (batchIndex + 1));
+  var partDefault = partBook.getSheets()[0];
+  var copiedPages = [];
+  var settingsSheet = workbook.getSheetByName('Report Settings');
+
+  try {
+    if (settingsSheet) {
+      var copiedSettings = settingsSheet.copyTo(partBook);
+      copiedSettings.setName('Report Settings');
+      copiedSettings.hideSheet();
+    }
+    pageSheets.forEach(function(pageSheet) {
+      var copied = pageSheet.copyTo(partBook);
+      copied.setName(pageSheet.getName());
+      copiedPages.push(copied);
+    });
+
+    if (copiedPages.length === 0) {
+      throw new Error('No report pages were created for batch ' + (batchIndex + 1));
+    }
+    if (partDefault && partBook.getSheets().length > 1) {
+      partBook.deleteSheet(partDefault);
+    }
+    SpreadsheetApp.flush();
+
+    var blob = partBook.getAs('application/pdf');
+    blob.setName(copyName + '_Part' + (batchIndex + 1) + '.pdf');
+    var file = DriveApp.getRootFolder().createFile(blob);
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    return {
+      part: batchIndex + 1,
+      processed: pageSheets.length,
+      url: 'https://drive.google.com/file/d/' + file.getId() + '/view'
+    };
+  } finally {
+    try {
+      DriveApp.getFileById(partBook.getId()).setTrashed(true);
+    } catch (e) {
+      Logger.log('Unable to trash temporary PDF workbook: ' + e);
+    }
+  }
+}
+
+function clearRangeContent(sheet, a1Notation) {
+  try {
+    sheet.getRange(a1Notation).clearContent();
+  } catch (e) {
+    Logger.log('clearRangeContent error [' + a1Notation + ']: ' + e);
+  }
+}
+
+function clearImagesInRange(sheet, rangeA1) {
+  try {
+    var range = sheet.getRange(rangeA1);
+    var firstRow = range.getRow();
+    var lastRow = firstRow + range.getNumRows() - 1;
+    var firstCol = range.getColumn();
+    var lastCol = firstCol + range.getNumColumns() - 1;
+    sheet.getImages().forEach(function(image) {
+      var anchor = image.getAnchorCell();
+      if (!anchor) return;
+      var row = anchor.getRow();
+      var col = anchor.getColumn();
+      if (row >= firstRow && row <= lastRow && col >= firstCol && col <= lastCol) {
+        image.remove();
+      }
+    });
+  } catch (e) {
+    Logger.log('clearImagesInRange error [' + rangeA1 + ']: ' + e);
   }
 }
 
@@ -119,34 +337,48 @@ function passFail(score, threshold) {
 /**
  * Insert a QR code image for a student into L4:O12 (Student 1 only).
  */
-function insertQRCode(sheet, student) {
+function insertQRCode(sheet, student, qrTokensByStudent) {
   try {
     var startCol = COL.L;
     var startRow = 4;
     var endCol   = COL.O;
     var endRow   = 12;
 
-    var qrTokens = findRecords(CONFIG.SHEETS.QR_TOKENS, {
-      STUDENT_ID: student.STUDENT_ID,
-      IS_ACTIVE: true
-    });
+    var qrTokens = qrTokensByStudent
+      ? (qrTokensByStudent[String(student.STUDENT_ID).trim()] || [])
+      : findRecords(CONFIG.SHEETS.QR_TOKENS, {
+          STUDENT_ID: student.STUDENT_ID,
+          IS_ACTIVE: true
+        });
     if (qrTokens.length === 0) return; // no QR token — skip silently
 
     var token = qrTokens[0].TOKEN;
     var qrUrl = generateQRUrl(token);
+    var boxWidth = 0;
+    var boxHeight = 0;
+    for (var column = startCol; column <= endCol; column++) {
+      boxWidth += sheet.getColumnWidth(column);
+    }
+    for (var rowNumber = startRow; rowNumber <= endRow; rowNumber++) {
+      boxHeight += sheet.getRowHeight(rowNumber);
+    }
 
-    var qrBlob = UrlFetchApp.fetch(qrUrl).getBlob();
-    var qrImage = sheet.insertImage(
-      qrBlob,
-      startCol,
-      startRow,
-      endCol - startCol + 1,
-      endRow - startRow + 1
-    );
+    clearImagesInRange(sheet, 'L4:O12');
+    var qrBlob = UrlFetchApp.fetch(qrUrl, { muteHttpExceptions: true }).getBlob();
+    var qrImage = sheet.insertImage(qrBlob, startCol, startRow, 0, 0);
+    var maxWidth = Math.max(1, boxWidth - 4);
+    var maxHeight = Math.max(1, boxHeight - 4);
+    var imageWidth = Math.max(1, qrImage.getWidth());
+    var imageHeight = Math.max(1, qrImage.getHeight());
+    var scale = Math.min(maxWidth / imageWidth, maxHeight / imageHeight);
+    var finalWidth = Math.max(1, Math.floor(imageWidth * scale));
+    var finalHeight = Math.max(1, Math.floor(imageHeight * scale));
 
     qrImage.setAnchorCell(sheet.getRange(startRow, startCol));
-    qrImage.setAnchorCellXOffset(2);
-    qrImage.setAnchorCellYOffset(2);
+    qrImage.setWidth(finalWidth);
+    qrImage.setHeight(finalHeight);
+    qrImage.setAnchorCellXOffset(Math.max(0, Math.floor((boxWidth - finalWidth) / 2)));
+    qrImage.setAnchorCellYOffset(Math.max(0, Math.floor((boxHeight - finalHeight) / 2)));
   } catch (e) {
     Logger.log('insertQRCode error for student ' + student.STUDENT_ID + ': ' + e);
   }
@@ -158,11 +390,13 @@ function insertQRCode(sheet, student) {
  * For a given termId, collect activities (sorted by order) and student scores.
  * Returns { activities: [{name, type, maxScore, rawScore}], weight, passingPercent }
  */
-function buildTermData(termId, studentId, studentGradeLevel) {
+function buildTermData(termId, studentId, studentGradeLevel, context) {
   var gradeToMatch = String(studentGradeLevel || '').trim();
-  var allActivities = getAllRecords(CONFIG.SHEETS.ACTIVITIES);
+  var allActivities = context && context.activities
+    ? context.activities
+    : getAllRecords(CONFIG.SHEETS.ACTIVITIES);
   var termActivities = allActivities.filter(function(a) {
-    if (a.TERM_ID !== termId) return false;
+    if (String(a.TERM_ID).trim() !== String(termId).trim()) return false;
     if (!(a.IS_ACTIVE === true || a.IS_ACTIVE === 'TRUE' || a.IS_ACTIVE === 'true')) return false;
     var actGrade = String(a.GRADE_LEVEL || '').trim();
     if (actGrade !== '' && gradeToMatch !== '' && actGrade !== gradeToMatch) return false;
@@ -170,10 +404,14 @@ function buildTermData(termId, studentId, studentGradeLevel) {
   });
   termActivities.sort(function(a, b) { return (a.ACTIVITY_ORDER || 0) - (b.ACTIVITY_ORDER || 0); });
 
-  var studentScores = findRecords(CONFIG.SHEETS.SCORES, { STUDENT_ID: studentId });
+  var studentScores = context && context.scoresByStudent
+    ? (context.scoresByStudent[String(studentId).trim()] || [])
+    : findRecords(CONFIG.SHEETS.SCORES, { STUDENT_ID: studentId });
 
   var activities = termActivities.map(function(act) {
-    var score = studentScores.find(function(s) { return s.ACTIVITY_ID === act.ACTIVITY_ID; });
+    var score = studentScores.find(function(s) {
+      return String(s.ACTIVITY_ID).trim() === String(act.ACTIVITY_ID).trim();
+    });
     return {
       name: act.ACTIVITY_NAME || '',
       type: act.ACTIVITY_TYPE || '',
@@ -182,7 +420,9 @@ function buildTermData(termId, studentId, studentGradeLevel) {
     };
   });
 
-  var term = findRecordById(CONFIG.SHEETS.GRADING_TERMS, 'TERM_ID', termId) || {};
+  var term = context && context.termById
+    ? (context.termById[String(termId).trim()] || {})
+    : findRecordById(CONFIG.SHEETS.GRADING_TERMS, 'TERM_ID', termId) || {};
   return {
     activities: activities,
     weight: parseFloat(term.WEIGHT_PERCENT) || 0,
@@ -218,7 +458,7 @@ function calcEquiv(activities, weight) {
  * @param {object} settings — SETTINGS object
  * @param {number} stageNum — semester stage to generate (1-4); defaults to 4 (all)
  */
-function fillStudentColumns(sheet, student, terms, settings, stageNum) {
+function fillStudentColumns(sheet, student, terms, settings, stageNum, qrTokensByStudent) {
   stageNum = stageNum || 4;
   var s1 = settings || {};
 
@@ -257,9 +497,23 @@ function fillStudentColumns(sheet, student, terms, settings, stageNum) {
   writeCell(sheet, 12, cClsNum, student.CLASS_NUMBER);
 
   // ── QR Code (L4:O12) ──
-  insertQRCode(sheet, student);
+  insertQRCode(sheet, student, qrTokensByStudent);
 
   // ── Midterm Collective ──
+  clearRangeContent(sheet, 'C18:D30');
+  clearRangeContent(sheet, 'E18:F30');
+  clearRangeContent(sheet, 'I18:J22');
+  clearRangeContent(sheet, 'K18:L22');
+  clearRangeContent(sheet, 'I27:J30');
+  clearRangeContent(sheet, 'K27:L30');
+  clearRangeContent(sheet, 'C36:D41');
+  clearRangeContent(sheet, 'E36:F41');
+  clearRangeContent(sheet, 'I36:J41');
+  clearRangeContent(sheet, 'K36:L41');
+  ['S18', 'S20', 'S21:S22', 'S23', 'S28', 'S29:S30', 'S31',
+    'S33', 'S34:S35', 'S36', 'S38', 'S39:S40', 'S41', 'S43']
+    .forEach(function(range) { clearRangeContent(sheet, range); });
+
   var mc = terms.midColl;
   writeCell(sheet, rowMC_wt, cMC_wt, mc.weight);
   mc.activities.forEach(function(act, i) {
@@ -270,10 +524,10 @@ function fillStudentColumns(sheet, student, terms, settings, stageNum) {
     writeCell(sheet, row, cMC_max,  act.maxScore);
   });
   var mcCalc = calcEquiv(mc.activities, mc.weight);
-  writeCell(sheet, rowMC_tot, cMC_raw, mcCalc.rawTotal);
-  writeCell(sheet, rowMC_tot, cMC_max, mcCalc.maxTotal);
-  writeCell(sheet, rowMC_tot, cMC_eq,  mcCalc.equiv);
-  writeCell(sheet, rowMC_tot, cMC_pf,  passFail(mcCalc.equiv, s1.MIDTERM_COLLECTIVE_PASSING || 50));
+  writeFormula(sheet, rowMC_tot, cMC_raw, '=SUM(E18:E30)');
+  writeFormula(sheet, rowMC_tot, cMC_max, '=SUM(F18:F30)');
+  writeFormula(sheet, rowMC_tot, cMC_eq, '=IF(OR(F31="",F31=0),"",ROUND(E31/F31*100*G16/100,2))');
+  writeFormula(sheet, rowMC_tot, cMC_pf, '=IF(G31="","",IF(G31>=' + reportSettingFormula_('MIDTERM_COLLECTIVE_PASSING') + ',"PASS","FAIL"))');
 
   // ── Final Collective Initial ──
   var fci = terms.finCollInit;
@@ -286,26 +540,26 @@ function fillStudentColumns(sheet, student, terms, settings, stageNum) {
     writeCell(sheet, row, cFCI_max,  act.maxScore);
   });
   var fciCalc = calcEquiv(fci.activities, fci.weight);
-  writeCell(sheet, rowFCI_tot, cFCI_raw, fciCalc.rawTotal);
-  writeCell(sheet, rowFCI_tot, cFCI_max, fciCalc.maxTotal);
-  writeCell(sheet, rowFCI_tot, cFCI_eq,  fciCalc.equiv);
-  writeCell(sheet, rowFCI_tot, cFCI_pf,  passFail(fciCalc.equiv, s1.FINAL_COLLECTIVE_INITIAL_PASSING || 50));
+  writeFormula(sheet, rowFCI_tot, cFCI_raw, '=SUM(K18:K22)');
+  writeFormula(sheet, rowFCI_tot, cFCI_max, '=SUM(L18:L22)');
+  writeFormula(sheet, rowFCI_tot, cFCI_eq, '=IF(OR(L23="",L23=0),"",ROUND(K23/L23*100*M16/100,2))');
+  writeFormula(sheet, rowFCI_tot, cFCI_pf, '=IF(M23="","",IF(M23>=' + reportSettingFormula_('FINAL_COLLECTIVE_INITIAL_PASSING') + ',"PASS","FAIL"))');
 
   // ── Final Collective Final ──
   var fcf = terms.finCollFin;
   writeCell(sheet, rowFCF_wt, cFCF_wt, fcf.weight);
   fcf.activities.forEach(function(act, i) {
     var row = rowFCF_st + i;
-    if (row > rowFCF_tot) return;
+    if (row >= rowFCF_tot) return;
     writeCell(sheet, row, cFCF_name, act.name);
     writeCell(sheet, row, cFCF_raw,  act.rawScore);
     writeCell(sheet, row, cFCF_max,  act.maxScore);
   });
   var fcfCalc = calcEquiv(fcf.activities, fcf.weight);
-  writeCell(sheet, rowFCF_tot, cFCF_raw, fcfCalc.rawTotal);
-  writeCell(sheet, rowFCF_tot, cFCF_max, fcfCalc.maxTotal);
-  writeCell(sheet, rowFCF_tot, cFCF_eq,  fcfCalc.equiv);
-  writeCell(sheet, rowFCF_tot, cFCF_pf,  passFail(fcfCalc.equiv, s1.FINAL_COLLECTIVE_FINAL_PASSING || 50));
+  writeFormula(sheet, rowFCF_tot, cFCF_raw, '=SUM(K27:K30)');
+  writeFormula(sheet, rowFCF_tot, cFCF_max, '=SUM(L27:L30)');
+  writeFormula(sheet, rowFCF_tot, cFCF_eq, '=IF(OR(L31="",L31=0),"",ROUND(K31/L31*100*M25/100,2))');
+  writeFormula(sheet, rowFCF_tot, cFCF_pf, '=IF(M31="","",IF(M31>=' + reportSettingFormula_('FINAL_COLLECTIVE_FINAL_PASSING') + ',"PASS","FAIL"))');
 
   // ── Midterm Examination ──
   var me = terms.midExam;
@@ -318,10 +572,10 @@ function fillStudentColumns(sheet, student, terms, settings, stageNum) {
     writeCell(sheet, row, cME_max,  act.maxScore);
   });
   var meCalc = calcEquiv(me.activities, me.weight);
-  writeCell(sheet, rowME_tot, cME_raw, meCalc.rawTotal);
-  writeCell(sheet, rowME_tot, cME_max, meCalc.maxTotal);
-  writeCell(sheet, rowME_tot, cME_eq,  meCalc.equiv);
-  writeCell(sheet, rowME_tot, cME_pf,  passFail(meCalc.equiv, s1.MIDTERM_EXAM_PASSING || 50));
+  writeFormula(sheet, rowME_tot, cME_raw, '=SUM(E36:E41)');
+  writeFormula(sheet, rowME_tot, cME_max, '=SUM(F36:F41)');
+  writeFormula(sheet, rowME_tot, cME_eq, '=IF(OR(F42="",F42=0),"",ROUND(E42/F42*100*G34/100,2))');
+  writeFormula(sheet, rowME_tot, cME_pf, '=IF(G42="","",IF(G42>=' + reportSettingFormula_('MIDTERM_EXAM_PASSING') + ',"PASS","FAIL"))');
 
   // ── Final Examination ──
   var fe = terms.finExam;
@@ -334,53 +588,46 @@ function fillStudentColumns(sheet, student, terms, settings, stageNum) {
     writeCell(sheet, row, cFE_max,  act.maxScore);
   });
   var feCalc = calcEquiv(fe.activities, fe.weight);
-  writeCell(sheet, rowFE_tot, cFE_raw, feCalc.rawTotal);
-  writeCell(sheet, rowFE_tot, cFE_max, feCalc.maxTotal);
-  writeCell(sheet, rowFE_tot, cFE_eq,  feCalc.equiv);
-  writeCell(sheet, rowFE_tot, cFE_pf,  passFail(feCalc.equiv, s1.FINAL_EXAM_PASSING || 50));
+  writeFormula(sheet, rowFE_tot, cFE_raw, '=SUM(K36:K41)');
+  writeFormula(sheet, rowFE_tot, cFE_max, '=SUM(L36:L41)');
+  writeFormula(sheet, rowFE_tot, cFE_eq, '=IF(OR(L42="",L42=0),"",ROUND(K42/L42*100*M34/100,2))');
+  writeFormula(sheet, rowFE_tot, cFE_pf, '=IF(M42="","",IF(M42>=' + reportSettingFormula_('FINAL_EXAM_PASSING') + ',"PASS","FAIL"))');
 
   // ── Score Summary (rows 56-67) ──
-  writeCell(sheet, 56, cSum, mcCalc.equiv);                       // Midterm Collective
-  writeCell(sheet, 59, cSum, meCalc.equiv);                       // Midterm Examination
-  writeCell(sheet, 62, cSum, fciCalc.equiv + fcfCalc.equiv);      // Total Final Collective
-  writeCell(sheet, 65, cSum, feCalc.equiv);                       // Final Examination
-  var overall = mcCalc.equiv + meCalc.equiv + fciCalc.equiv + fcfCalc.equiv + feCalc.equiv;
-  writeCell(sheet, 67, cSum, Math.round(overall * 100) / 100);   // Overall
+  writeFormula(sheet, 56, cSum, '=G31');
+  writeFormula(sheet, 59, cSum, '=G42');
+  writeFormula(sheet, 62, cSum, '=IF(COUNT(M23,M31)=0,"",SUM(M23,M31))');
+  writeFormula(sheet, 65, cSum, '=M42');
+  writeFormula(sheet, 67, cSum, '=IF(COUNT(G56,G59,G62,G65)=0,"",ROUND(SUM(G56,G59,G62,G65),2))');
 
   // ── Semester Grade Summary Table (col S, rows 18-43) ──
-  writeCell(sheet, 18, cSGST, mcCalc.equiv);   // S18 — Midterm Collective
-  writeCell(sheet, 20, cSGST, meCalc.equiv);   // S20 — Midterm Examination
+  writeFormula(sheet, 18, cSGST, '=G31');
+  writeFormula(sheet, 20, cSGST, '=G42');
 
   // Stage 1: Midterm Collective + Midterm Examination
-  var st1 = mcCalc.equiv + meCalc.equiv;
-  writeCell(sheet, 21, cSGST, st1);
-  writeCell(sheet, 22, cSGST, st1);
-  writeCell(sheet, 23, cSGST, passFail(st1, s1.STAGE1_PASSING));
+  writeFormula(sheet, 21, cSGST, '=IF(COUNT(S18,S20)=0,"",SUM(S18,S20))');
+  writeFormula(sheet, 23, cSGST, '=IF(S21="","",IF(S21>=' + reportSettingFormula_('STAGE1_PASSING') + ',"PASS","FAIL"))');
 
   if (stageNum >= 2) {
-    writeCell(sheet, 28, cSGST, fciCalc.equiv);   // S28 — Final Collective Initial
-    var st2 = st1 + fciCalc.equiv;
-    writeCell(sheet, 29, cSGST, st2);
-    writeCell(sheet, 30, cSGST, st2);
-    writeCell(sheet, 31, cSGST, passFail(st2, s1.STAGE2_PASSING));
+    writeFormula(sheet, 28, cSGST, '=M23');
+    writeFormula(sheet, 29, cSGST, '=IF(COUNT(S21,S28)=0,"",SUM(S21,S28))');
+    writeFormula(sheet, 31, cSGST, '=IF(S29="","",IF(S29>=' + reportSettingFormula_('STAGE2_PASSING') + ',"PASS","FAIL"))');
   }
 
   if (stageNum >= 3) {
-    writeCell(sheet, 33, cSGST, fcfCalc.equiv);   // S33 — Final Collective Final
-    var st3 = st1 + fciCalc.equiv + fcfCalc.equiv;
-    writeCell(sheet, 34, cSGST, st3);
-    writeCell(sheet, 35, cSGST, st3);
-    writeCell(sheet, 36, cSGST, passFail(st3, s1.STAGE3_PASSING));
+    writeFormula(sheet, 33, cSGST, '=M31');
+    writeFormula(sheet, 34, cSGST, '=IF(COUNT(S29,S33)=0,"",SUM(S29,S33))');
+    writeFormula(sheet, 36, cSGST, '=IF(S34="","",IF(S34>=' + reportSettingFormula_('STAGE3_PASSING') + ',"PASS","FAIL"))');
   }
 
   if (stageNum >= 4) {
-    writeCell(sheet, 38, cSGST, feCalc.equiv);    // S38 — Final Examination
-    var st4 = Math.round(overall * 100) / 100;
-    writeCell(sheet, 39, cSGST, st4);
-    writeCell(sheet, 40, cSGST, st4);
-    writeCell(sheet, 41, cSGST, passFail(st4, s1.STAGE4_PASSING || s1.OVERALL_PASSING_PERCENT));
-    writeCell(sheet, 43, cSGST, st4);            // S43 — Final cumulative semester score
+    writeFormula(sheet, 38, cSGST, '=M42');
+    writeFormula(sheet, 39, cSGST, '=IF(COUNT(S34,S38)=0,"",SUM(S34,S38))');
+    writeFormula(sheet, 41, cSGST, '=IF(S39="","",IF(S39>=' + reportSettingFormula_('STAGE4_PASSING') + ',"PASS","FAIL"))');
+    writeFormula(sheet, 43, cSGST, '=S39');
   }
+
+  applyReportHighlights_(sheet);
 }
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
@@ -391,15 +638,14 @@ function handleGeneratePrintReport(payload, token) {
     var studentIds = payload.studentIds;
     var templateId = payload.templateId;
     var stageNum   = parseInt(payload.stage || 4, 10);
+    var jobId      = payload.jobId || '';
 
-    // Refactor 2 — batch support. Frontend sends students in small batches so
-    // each call stays well under the Apps Script ~6-min limit and a 400-student
-    // run finishes instead of disconnecting. One accumulating workbook is kept
-    // in Drive (workbookId) across batches; PDF is exported only on the last.
     var batchIndex   = payload.batchIndex !== undefined ? parseInt(payload.batchIndex, 10) : 0;
     var totalBatches = payload.totalBatches !== undefined ? parseInt(payload.totalBatches, 10) : 1;
     var workbookId   = payload.workbookId || null;
-    var isLastBatch  = (totalBatches <= 1) || (batchIndex >= totalBatches - 1);
+    var startIndex   = payload.startIndex !== undefined
+      ? parseInt(payload.startIndex, 10)
+      : batchIndex * (studentIds ? studentIds.length : 0);
 
     if (!studentIds || !Array.isArray(studentIds) || studentIds.length === 0) {
       return createResponse({ success: false, message: 'Student IDs array is required', data: null });
@@ -408,10 +654,15 @@ function handleGeneratePrintReport(payload, token) {
       return createResponse({ success: false, message: 'Template file ID is required. Set PRINT_TEMPLATE_ID in Settings.', data: null });
     }
 
+    var completed = getCompletedPrintBatch_(jobId, batchIndex);
+    if (completed) {
+      return createResponse({ success: true, message: completed.message, data: completed.data });
+    }
+
     // ── Settings + grading terms ──
     var settings = getSettingsObject();
-
-    var allTerms = getAllRecords(CONFIG.SHEETS.GRADING_TERMS);
+    var context = buildPrintContext_();
+    var allTerms = context.terms;
     allTerms.sort(function(a, b) { return a.TERM_ORDER - b.TERM_ORDER; });
 
     function findTerm(keywords) {
@@ -436,7 +687,7 @@ function handleGeneratePrintReport(payload, token) {
       Object.keys(termRoles).forEach(function(role) {
         var term = termRoles[role];
         result[role] = term.TERM_ID
-          ? buildTermData(term.TERM_ID, sid, studentGradeLevel)
+          ? buildTermData(term.TERM_ID, sid, studentGradeLevel, context)
           : { activities: [], weight: 0, passingPercent: 50, termName: role };
       });
       return result;
@@ -456,6 +707,7 @@ function handleGeneratePrintReport(payload, token) {
       }
       copyId = workbookId;
       templateSheet = workbook.getSheets()[0];
+      setReportSettingsSheet_(workbook, settings);
     } else {
       // First batch: make a fresh copy of the template
       var templateFile;
@@ -468,75 +720,89 @@ function handleGeneratePrintReport(payload, token) {
       copyId = copyFile.getId();
       workbook = SpreadsheetApp.openById(copyId);
       templateSheet = workbook.getSheetByName('Grade Card') || workbook.getSheets()[0];
+      setReportSettingsSheet_(workbook, settings);
     }
 
     // ── Fill one student per cloned page (Refactor 1: Student 2 removed) ──
     var errors = [];
     var processed = 0;
+    var pageSheets = [];
 
     for (var i = 0; i < studentIds.length; i++) {
       var studentId = studentIds[i];
-      var student = findRecordById(CONFIG.SHEETS.STUDENTS, 'STUDENT_ID', studentId);
+      var student = context.studentById[String(studentId).trim()];
       if (!student) {
         errors.push('Student (' + studentId + '): not found');
         continue;
       }
 
-      // Clone the clean template sheet so every page keeps the merged-cell layout
+      var pageNumber = startIndex + i + 1;
+      var pageName = 'Page ' + pageNumber;
+      removeSheetIfExists_(workbook, pageName);
       var pageSheet = templateSheet.copyTo(workbook);
-      pageSheet.setName('Page ' + (workbook.getNumSheets() - 1));
+      pageSheet.setName(pageName);
 
       try {
-        fillStudentColumns(pageSheet, student, buildAll(student), settings, stageNum);
+        fillStudentColumns(
+          pageSheet,
+          student,
+          buildAll(student),
+          settings,
+          stageNum,
+          context.qrTokensByStudent
+        );
+        pageSheets.push(pageSheet);
         processed++;
       } catch (e) {
         errors.push('Student (' + studentId + '): ' + e.toString());
+        try { workbook.deleteSheet(pageSheet); } catch (deleteError) { Logger.log(deleteError); }
       }
     }
 
     SpreadsheetApp.flush();
 
-    var pdfUrl = null;
+    var pdfPart = pageSheets.length > 0
+      ? createPdfPart_(workbook, pageSheets, copyName + '_' + (jobId || 'run'), batchIndex)
+      : null;
     var sheetUrl = 'https://docs.google.com/spreadsheets/d/' + copyId + '/edit';
+    var isLastBatch  = (totalBatches <= 1) || (batchIndex >= totalBatches - 1);
 
     if (isLastBatch) {
       // Remove the clean template sheet so it is not an empty page in the PDF
       try { workbook.deleteSheet(templateSheet); } catch (e) { /* ignore */ }
       SpreadsheetApp.flush();
 
-      var pdfBlob = workbook.getAs('application/pdf');
-      pdfBlob.setName(copyName + '.pdf');
-      var pdfFile = DriveApp.getRootFolder().createFile(pdfBlob);
-      pdfFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      pdfUrl = 'https://drive.google.com/file/d/' + pdfFile.getId() + '/view';
-
       createAuditLog(
         adminId,
         'GENERATE_PRINT_REPORT',
         null, null, null,
-        JSON.stringify({ stage: stageNum, processed: processed, batches: totalBatches }),
+        JSON.stringify({ stage: stageNum, processed: processed, batches: totalBatches, jobId: jobId }),
         'web',
         'Generated Stage ' + stageNum + ' report cards (' + totalBatches + ' batch' + (totalBatches !== 1 ? 'es' : '') + ')'
       );
     }
 
-    return createResponse({
-      success: true,
-      message: isLastBatch
-        ? 'Report cards generated for ' + processed + ' student' + (processed !== 1 ? 's' : '') + (errors.length > 0 ? ' (' + errors.length + ' errors)' : '')
-        : 'Batch ' + (batchIndex + 1) + ' of ' + totalBatches + ' done (' + processed + ' students)',
-      data: {
-        processed: processed,
-        errors: errors,
-        batchIndex: batchIndex,
-        totalBatches: totalBatches,
-        isLastBatch: isLastBatch,
-        workbookId: copyId,
-        pdfUrl: pdfUrl,
-        spreadsheetUrl: sheetUrl,
-        fileUrl: pdfUrl
-      }
+    var responseMessage = isLastBatch
+      ? 'Report cards generated for ' + processed + ' student' + (processed !== 1 ? 's' : '') + (errors.length > 0 ? ' (' + errors.length + ' errors)' : '')
+      : 'Batch ' + (batchIndex + 1) + ' of ' + totalBatches + ' done (' + processed + ' students)';
+    var responseData = {
+      processed: processed,
+      errors: errors,
+      batchIndex: batchIndex,
+      totalBatches: totalBatches,
+      isLastBatch: isLastBatch,
+      workbookId: copyId,
+      pdfUrl: pdfPart ? pdfPart.url : null,
+      pdfPart: pdfPart,
+      pdfParts: pdfPart ? [pdfPart] : [],
+      spreadsheetUrl: sheetUrl,
+      fileUrl: pdfPart ? pdfPart.url : null
+    };
+    saveCompletedPrintBatch_(jobId, batchIndex, {
+      message: responseMessage,
+      data: responseData
     });
+    return createResponse({ success: true, message: responseMessage, data: responseData });
 
   } catch (error) {
     Logger.log('PrintService error: ' + error.toString());
